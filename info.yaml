@@ -1,10 +1,10 @@
 # Tiny Tapeout project information
 project:
-  title:        ""      # Project title
-  author:       ""      # Your name
+  title:        "DVD Screensaver"      # Project title
+  author:       "Shreyas Gupta"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  ""      # One line description of what your project does
-  language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
+  description:  "DVD screensaver animation to VGA"      # One line description of what your project does
+  language:     "SystemVerilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
 
   # How many tiles your design occupies? A single tile is about 167x108 uM.
@@ -33,14 +33,14 @@ pinout:
   ui[7]: ""
 
   # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
+  uo[0]: "vga_red_1"
+  uo[1]: "vga_green_0"
+  uo[2]: "vga_blue_1"
+  uo[3]: "vga_hsync"
+  uo[4]: "vga_vsync"
+  uo[5]: "vga_red_0"
+  uo[6]: "vga_green_1"
+  uo[7]: "vga_blue_0"
 
   # Bidirectional pins
   uio[0]: ""
