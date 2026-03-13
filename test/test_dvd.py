@@ -22,6 +22,14 @@ H_TOTAL        = 800
 V_TOTAL        = 525
 PIXEL_CLOCK_NS = 40   # 25 MHz → 40 ns per pixel
 
+# ── Safe integer read (handles X/Z in gate-level sim) ─────────
+def read_int(signal):
+    """Return integer value of a signal, or None if it contains X/Z."""
+    try:
+        return signal.value.to_unsigned()
+    except ValueError:
+        return None
+
 # ── Tiny Tapeout VGA PMOD pin mapping (from uo_out) ───────────
 # uo_out[0]=R1  uo_out[1]=G0  uo_out[2]=B1  uo_out[3]=hsync
 # uo_out[4]=vsync  uo_out[5]=R0  uo_out[6]=G1  uo_out[7]=B0
@@ -60,12 +68,19 @@ def save_png(path, pixels, width, height):
 # ── Frame capture helper ───────────────────────────────────────
 async def capture_frame(dut):
     """Sync to vsync pulse then capture one full visible frame."""
-    # Wait for vsync to go low (start of vsync pulse)
-    while (dut.uo_out.value.integer >> 4) & 1:
+    # Wait for vsync to go low — skip cycles where signal is still X/Z
+    for _ in range(H_TOTAL * V_TOTAL * 2):
         await RisingEdge(dut.clk)
+        val = read_int(dut.uo_out)
+        if val is not None and not ((val >> 4) & 1):
+            break
+
     # Wait for vsync to go high again (end of vsync pulse)
-    while not ((dut.uo_out.value.integer >> 4) & 1):
+    for _ in range(H_TOTAL * V_TOTAL * 2):
         await RisingEdge(dut.clk)
+        val = read_int(dut.uo_out)
+        if val is not None and ((val >> 4) & 1):
+            break
 
     pixels = [(0, 0, 0)] * (H_VISIBLE * V_VISIBLE)
     x, y = 0, 0
@@ -73,7 +88,11 @@ async def capture_frame(dut):
 
     for _ in range(H_TOTAL * V_TOTAL + 100):
         await RisingEdge(dut.clk)
-        val = dut.uo_out.value.integer
+        val = read_int(dut.uo_out)
+        if val is None:
+            x += 1
+            continue  # skip X/Z cycles, treat as invisible
+
         r8, g8, b8, hsync, vsync = decode_uo_out(val)
 
         # Track raster position
@@ -122,16 +141,25 @@ async def test_dvd_screensaver(dut):
     dut.rst_n.value  = 1
     dut._log.info("Reset released")
 
-    # ── Sanity: verify uo_out is driveable (no X/Z) ───────────
-    await ClockCycles(dut.clk, 5)
-    val = dut.uo_out.value.integer
-    dut._log.info(f"uo_out after reset = 0x{val:02X}")
+    # ── Wait for signals to come out of X/Z ───────────────────
+    # Gate-level sim needs extra cycles for all flops to initialise
+    dut._log.info("Waiting for signals to resolve from X/Z...")
+    for _ in range(H_TOTAL * 4):
+        await RisingEdge(dut.clk)
+        if read_int(dut.uo_out) is not None:
+            break
+    else:
+        raise cocotb.result.TestFailure("uo_out never resolved from X/Z after reset")
+
+    val = read_int(dut.uo_out)
+    dut._log.info(f"uo_out resolved = 0x{val:02X}")
 
     # ── Wait for first vsync ───────────────────────────────────
     dut._log.info("Waiting for first vsync...")
     for _ in range(H_TOTAL * V_TOTAL * 2):
         await RisingEdge(dut.clk)
-        if not ((dut.uo_out.value.integer >> 4) & 1):
+        val = read_int(dut.uo_out)
+        if val is not None and not ((val >> 4) & 1):
             break
     else:
         raise cocotb.result.TestFailure("Timed out waiting for vsync")
@@ -162,7 +190,8 @@ async def test_dvd_screensaver(dut):
 
     for _ in range(total_cycles):
         await RisingEdge(dut.clk)
-        if not ((dut.uo_out.value.integer >> 3) & 1):
+        val = read_int(dut.uo_out)
+        if val is not None and not ((val >> 3) & 1):
             hsync_low_count += 1
 
     # hsync pulse = 96 px/line; over 3 lines → ~288 low cycles
