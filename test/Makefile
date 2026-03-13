@@ -8,6 +8,8 @@ TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
 PROJECT_SOURCES = project.sv vga_timer.sv dvd.sv
 
+TOPLEVEL = tt_um_example
+
 ifneq ($(GATES),yes)
 
 # RTL simulation:
