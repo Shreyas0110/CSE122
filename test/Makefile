@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.sv vga_timer.sv dvd.sv
+PROJECT_SOURCES = project.sv
 
 TOPLEVEL = tt_um_example
 
