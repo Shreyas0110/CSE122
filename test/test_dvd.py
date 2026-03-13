@@ -67,50 +67,61 @@ def save_png(path, pixels, width, height):
 
 # ── Frame capture helper ───────────────────────────────────────
 async def capture_frame(dut):
-    """Sync to vsync pulse then capture one full visible frame."""
-    # Wait for vsync to go low — skip cycles where signal is still X/Z
-    for _ in range(H_TOTAL * V_TOTAL * 2):
-        await RisingEdge(dut.clk)
-        val = read_int(dut.uo_out)
-        if val is not None and not ((val >> 4) & 1):
-            break
+    """Sync to a complete vsync pulse then capture one full visible frame."""
 
-    # Wait for vsync to go high again (end of vsync pulse)
+    # Wait for vsync to be HIGH (idle) first, in case we're mid-pulse
     for _ in range(H_TOTAL * V_TOTAL * 2):
         await RisingEdge(dut.clk)
         val = read_int(dut.uo_out)
         if val is not None and ((val >> 4) & 1):
             break
 
-    pixels = [(0, 0, 0)] * (H_VISIBLE * V_VISIBLE)
-    x, y = 0, 0
-    hsync_prev, vsync_prev = 1, 1
+    # Now wait for vsync to go LOW (start of sync pulse)
+    for _ in range(H_TOTAL * V_TOTAL * 2):
+        await RisingEdge(dut.clk)
+        val = read_int(dut.uo_out)
+        if val is not None and not ((val >> 4) & 1):
+            break
 
-    for _ in range(H_TOTAL * V_TOTAL + 100):
+    # Wait for vsync to go HIGH again (active video begins shortly after)
+    for _ in range(H_TOTAL * 10):
+        await RisingEdge(dut.clk)
+        val = read_int(dut.uo_out)
+        if val is not None and ((val >> 4) & 1):
+            break
+
+    # Now scan exactly H_TOTAL * V_VISIBLE cycles of active video
+    # Track x by counting clocks; track y by counting hsync pulses
+    pixels = [(0, 0, 0)] * (H_VISIBLE * V_VISIBLE)
+    x = 0
+    y = 0
+    hsync_prev = 1
+
+    for _ in range(H_TOTAL * (V_VISIBLE + 10)):
         await RisingEdge(dut.clk)
         val = read_int(dut.uo_out)
         if val is None:
             x += 1
-            continue  # skip X/Z cycles, treat as invisible
+            continue
 
         r8, g8, b8, hsync, vsync = decode_uo_out(val)
 
-        # Track raster position
-        if hsync_prev == 1 and hsync == 0:   # hsync falling edge → new line
+        # hsync falling edge = end of active line, start of blanking
+        # hsync rising edge  = end of blanking, x counter resets to 0
+        if hsync_prev == 0 and hsync == 1:
             x = 0
-            if vsync_prev == 0 and vsync == 1:
-                y = 0
-        if hsync_prev == 0 and hsync == 1:   # hsync rising edge → increment line
             y += 1
+        elif hsync_prev == 1 and hsync == 0:
+            pass  # entering blanking, x keeps incrementing until rising edge
 
+        # Record pixel during active region: hsync=1, vsync=1, within visible area
         if hsync == 1 and vsync == 1 and x < H_VISIBLE and y < V_VISIBLE:
             pixels[y * H_VISIBLE + x] = (r8, g8, b8)
 
         x += 1
         hsync_prev = hsync
-        vsync_prev = vsync
 
-        if y >= V_VISIBLE and vsync == 0:
+        if y >= V_VISIBLE:
             break
 
     return pixels
@@ -160,16 +171,31 @@ async def test_dvd_screensaver(dut):
     val = read_int(dut.uo_out)
     dut._log.info(f"uo_out resolved = 0x{val:02X}")
 
-    # ── Wait for first vsync ───────────────────────────────────
-    dut._log.info("Waiting for first vsync...")
+    # ── Wait for a real vsync pulse (high → low → high) ──────
+    dut._log.info("Waiting for first vsync pulse...")
+    # Step 1: ensure vsync is currently high (idle)
+    for _ in range(H_TOTAL * V_TOTAL * 2):
+        await RisingEdge(dut.clk)
+        val = read_int(dut.uo_out)
+        if val is not None and ((val >> 4) & 1):
+            break
+    # Step 2: wait for vsync to go low
     for _ in range(H_TOTAL * V_TOTAL * 2):
         await RisingEdge(dut.clk)
         val = read_int(dut.uo_out)
         if val is not None and not ((val >> 4) & 1):
             break
     else:
-        raise AssertionError("Timed out waiting for vsync")
-    dut._log.info("vsync detected — starting frame capture")
+        raise AssertionError("Timed out waiting for vsync low")
+    # Step 3: wait for vsync to go high again
+    for _ in range(H_TOTAL * 10):
+        await RisingEdge(dut.clk)
+        val = read_int(dut.uo_out)
+        if val is not None and ((val >> 4) & 1):
+            break
+    else:
+        raise AssertionError("Timed out waiting for vsync high")
+    dut._log.info("vsync pulse complete — starting frame capture")
 
     # ── Capture frames and save PNGs ──────────────────────────
     for frame_idx in range(NUM_FRAMES):
