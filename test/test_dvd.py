@@ -131,6 +131,12 @@ async def test_dvd_screensaver(dut):
     clock = Clock(dut.clk, PIXEL_CLOCK_NS, unit="ns")
     cocotb.start_soon(clock.start())
 
+    # ── Drive power pins if present (gate-level sim) ──────────
+    if hasattr(dut, 'VPWR'):
+        dut.VPWR.value = 1
+        dut.VGND.value = 0
+        dut._log.info("Power pins driven (GL sim)")
+
     # ── Reset ──────────────────────────────────────────────────
     dut._log.info("Applying reset")
     dut.ena.value    = 1
@@ -144,12 +150,12 @@ async def test_dvd_screensaver(dut):
     # ── Wait for signals to come out of X/Z ───────────────────
     # Gate-level sim needs extra cycles for all flops to initialise
     dut._log.info("Waiting for signals to resolve from X/Z...")
-    for _ in range(H_TOTAL * 4):
+    for _ in range(H_TOTAL * V_TOTAL):  # up to one full frame
         await RisingEdge(dut.clk)
         if read_int(dut.uo_out) is not None:
             break
     else:
-        raise cocotb.result.TestFailure("uo_out never resolved from X/Z after reset")
+        raise AssertionError("uo_out never resolved from X/Z after reset")
 
     val = read_int(dut.uo_out)
     dut._log.info(f"uo_out resolved = 0x{val:02X}")
@@ -162,7 +168,7 @@ async def test_dvd_screensaver(dut):
         if val is not None and not ((val >> 4) & 1):
             break
     else:
-        raise cocotb.result.TestFailure("Timed out waiting for vsync")
+        raise AssertionError("Timed out waiting for vsync")
     dut._log.info("vsync detected — starting frame capture")
 
     # ── Capture frames and save PNGs ──────────────────────────
